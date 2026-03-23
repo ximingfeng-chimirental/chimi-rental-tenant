@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { auth0 } from "@/app/lib/auth0";
 import TenantPortalDashboard from "@/app/components/TenantPortalDashboard";
 
+
 export default async function Home({
   searchParams,
 }: {
