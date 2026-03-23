@@ -15,6 +15,7 @@ export default async function Home({
     redirect("/api/auth/login?returnTo=/");
   }
 
+  
   const resolvedSearchParams = await searchParams;
   return (
     <TenantPortalDashboard
