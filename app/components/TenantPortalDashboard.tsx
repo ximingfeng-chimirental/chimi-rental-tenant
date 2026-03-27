@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { loadStripe, type Stripe } from "@stripe/stripe-js";
 import {
@@ -107,7 +106,7 @@ function Header() {
         </p>
         <p style={{ margin: 0, fontSize: 11, color: "#94a3b8" }}>Tenant Portal</p>
       </div>
-      <Link
+      <a
         href="/api/auth/logout"
         style={{
           color: "#e2e8f0",
@@ -116,7 +115,7 @@ function Header() {
         }}
       >
         Log out
-      </Link>
+      </a>
     </header>
   );
 }
