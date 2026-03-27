@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { tenant, error } = await getAuthenticatedTenant();
+  const { tenant, error } = await getAuthenticatedTenant(req);
   if (error || !tenant) {
     return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

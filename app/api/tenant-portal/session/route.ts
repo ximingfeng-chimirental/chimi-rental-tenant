@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedTenant } from "@/app/lib/tenant-auth";
 import { buildTenantPortalSession } from "@/app/lib/tenant-portal-data";
 
-export async function GET() {
-  const { tenant, error } = await getAuthenticatedTenant();
+export async function GET(req: NextRequest) {
+  const { tenant, error } = await getAuthenticatedTenant(req);
   if (error || !tenant) {
     return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

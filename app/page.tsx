@@ -17,6 +17,7 @@ export default async function Home({
   }
 
   
+  
   const resolvedSearchParams = await searchParams;
   return (
     <TenantPortalDashboard
