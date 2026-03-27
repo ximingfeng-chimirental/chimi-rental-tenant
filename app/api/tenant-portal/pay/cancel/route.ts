@@ -4,6 +4,11 @@ import ChargePaymentModel from "@/app/models/charge-payment.model";
 import stripe from "@/app/lib/stripe";
 
 export async function POST(req: NextRequest) {
+  const { tenant, error } = await getAuthenticatedTenant(req);
+  if (error || !tenant) {
+    return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json().catch(() => ({}));
   const { paymentIntentId } = body;
 
@@ -12,11 +17,6 @@ export async function POST(req: NextRequest) {
       { error: "paymentIntentId is required" },
       { status: 400 }
     );
-  }
-
-  const { tenant, error } = await getAuthenticatedTenant(req);
-  if (error || !tenant) {
-    return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   const chargePayment = await ChargePaymentModel.findOne({

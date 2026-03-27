@@ -10,6 +10,11 @@ import "@/app/models/charge-category.model";
 const PAYABLE_STATUSES = ["unpaid", "partial", "overdue"];
 
 export async function POST(req: NextRequest) {
+  const { tenant, error } = await getAuthenticatedTenant(req);
+  if (error || !tenant) {
+    return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json().catch(() => ({}));
   const { chargeId, chargeIds: rawChargeIds, paymentMethod = "card" } = body;
 
@@ -25,11 +30,6 @@ export async function POST(req: NextRequest) {
       { error: "chargeId or chargeIds is required" },
       { status: 400 }
     );
-  }
-
-  const { tenant, error } = await getAuthenticatedTenant(req);
-  if (error || !tenant) {
-    return error ?? NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // Find the tenant's active leases to verify they can pay these charges
