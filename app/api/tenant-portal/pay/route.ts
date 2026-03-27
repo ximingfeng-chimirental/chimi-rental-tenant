@@ -153,9 +153,26 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const paymentIntent = await stripe.paymentIntents.create(
-    paymentIntentParams as never
-  );
+  let paymentIntent;
+  try {
+    paymentIntent = await stripe.paymentIntents.create(
+      paymentIntentParams as never
+    );
+  } catch (err: unknown) {
+    const msg =
+      err instanceof Error ? err.message : "Failed to create payment";
+    console.error("[pay] Stripe paymentIntents.create error:", msg);
+    const isMethodNotActivated =
+      msg.includes("not activated") || msg.includes("payment method");
+    return NextResponse.json(
+      {
+        error: isMethodNotActivated
+          ? `${method === "ach" ? "ACH" : "Card"} payments are not yet enabled. Please try another payment method or contact your landlord.`
+          : "Unable to initiate payment. Please try again.",
+      },
+      { status: 422 }
+    );
+  }
 
   await ChargePaymentModel.create({
     owner: tenant.owner,
