@@ -4,7 +4,7 @@ import { auth0 } from "@/app/lib/auth0";
 import Tenant from "@/app/models/tenant.model";
 
 export async function getAuthenticatedTenant(req?: NextRequest) {
-  const session = await auth0.getSession(req);
+  const session = req ? await auth0.getSession(req) : await auth0.getSession();
   const auth0UserId = session?.user?.sub;
   const sessionEmail = session?.user?.email ?? null;
   const emailVerified = Boolean(session?.user?.email_verified);
