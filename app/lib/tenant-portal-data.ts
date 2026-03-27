@@ -149,6 +149,7 @@ export async function buildTenantPortalSession({
       status: charge.status,
       paidAt: charge.paidAt ?? null,
       createdAt: charge.createdAt,
+      parentCharge: charge.parentCharge ? String(charge.parentCharge) : null,
       pendingPayment: pendingPaymentByChargeId.get(String(charge._id)) ?? null,
     })),
   };

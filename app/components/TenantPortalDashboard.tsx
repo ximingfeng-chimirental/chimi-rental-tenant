@@ -20,6 +20,7 @@ interface PortalCharge {
   status: "unpaid" | "partial" | "paid" | "overdue" | "voided" | "waived";
   paidAt: string | null;
   createdAt: string;
+  parentCharge: string | null;
   pendingPayment: {
     status: "pending" | "processing";
     paymentMethod: string;
@@ -724,8 +725,40 @@ export default function TenantPortalDashboard({
   const totalBalance = charges
     .filter((charge) => PAYABLE.includes(charge.status))
     .reduce((sum, charge) => sum + charge.balance, 0);
-  const currentCharges = charges.filter((charge) => PAYABLE.includes(charge.status));
-  const pastCharges = charges.filter((charge) => !PAYABLE.includes(charge.status));
+  const currentChargesFlat = charges.filter((charge) => PAYABLE.includes(charge.status));
+  const pastChargesFlat = charges.filter((charge) => !PAYABLE.includes(charge.status));
+
+  // Group late fees (children) under their parent charge
+  const groupCharges = (list: PortalCharge[]): PortalCharge[] => {
+    const parents = list.filter((c) => !c.parentCharge);
+    const childrenByParent = new Map<string, PortalCharge[]>();
+    for (const c of list) {
+      if (c.parentCharge) {
+        const arr = childrenByParent.get(c.parentCharge) || [];
+        arr.push(c);
+        childrenByParent.set(c.parentCharge, arr);
+      }
+    }
+    const result: PortalCharge[] = [];
+    for (const p of parents) {
+      result.push(p);
+      const children = childrenByParent.get(p._id);
+      if (children) {
+        children.sort((a, b) => new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime());
+        result.push(...children);
+      }
+    }
+    // Orphan late fees (parent not in this list)
+    for (const c of list) {
+      if (c.parentCharge && !parents.some((p) => p._id === c.parentCharge)) {
+        result.push(c);
+      }
+    }
+    return result;
+  };
+
+  const currentCharges = groupCharges(currentChargesFlat);
+  const pastCharges = groupCharges(pastChargesFlat);
   const chargeSections: ReadonlyArray<readonly [string, PortalCharge[]]> = [
     ["Current charges", currentCharges],
     ["Past charges", pastCharges],
@@ -905,21 +938,42 @@ export default function TenantPortalDashboard({
                 const inFlight = !!charge.pendingPayment;
                 const justPaid = successChargeIds.includes(charge._id) || processingChargeIds.includes(charge._id);
                 const coolingDown = cooldownChargeIds.includes(charge._id);
+                const isChild = !!charge.parentCharge;
                 return (
                   <div
                     key={charge._id}
                     style={{
-                      padding: "16px 20px",
+                      padding: isChild ? "12px 20px 12px 36px" : "16px 20px",
                       display: "flex",
                       alignItems: "center",
                       gap: 16,
                       flexWrap: "wrap",
                       borderTop: "1px solid #f8fafc",
+                      ...(isChild ? { borderLeft: "3px solid #fde68a", background: "#fffdf7" } : {}),
                     }}
                   >
                     <div style={{ flex: 1, minWidth: 160 }}>
-                      <p style={{ margin: "0 0 2px", fontSize: 14, fontWeight: 600 }}>
+                      <p style={{ margin: "0 0 2px", fontSize: isChild ? 13 : 14, fontWeight: 600, color: isChild ? "#64748b" : undefined }}>
+                        {isChild && <span style={{ color: "#f59e0b", marginRight: 4 }}>↳</span>}
                         {charge.title}
+                        {isChild && (
+                          <span
+                            style={{
+                              display: "inline-block",
+                              marginLeft: 6,
+                              fontSize: 10,
+                              fontWeight: 500,
+                              color: "#f59e0b",
+                              background: "#fffbeb",
+                              border: "1px solid #fde68a",
+                              borderRadius: 4,
+                              padding: "1px 5px",
+                              verticalAlign: "middle",
+                            }}
+                          >
+                            Late Fee
+                          </span>
+                        )}
                       </p>
                       <p style={{ margin: 0, fontSize: 12, color: "#94a3b8" }}>
                         {charge.category?.name ?? "-"} · Due {fmtDate(charge.dueDate)}
@@ -1017,7 +1071,11 @@ export default function TenantPortalDashboard({
               {currentCharges
                 .filter((c) => !c.pendingPayment && !successChargeIds.includes(c._id) && !processingChargeIds.includes(c._id))
                 .map((charge) => {
-                  const selected = pickerSelected.has(charge._id);
+                  const isChild = !!charge.parentCharge;
+                  // Late fees are auto-selected when parent is selected and can't be deselected
+                  const parentSelected = isChild && pickerSelected.has(charge.parentCharge!);
+                  const selected = pickerSelected.has(charge._id) || parentSelected;
+                  const locked = isChild; // late fees cannot be independently toggled
                   return (
                     <label
                       key={charge._id}
@@ -1025,42 +1083,83 @@ export default function TenantPortalDashboard({
                         display: "flex",
                         alignItems: "center",
                         gap: 12,
-                        padding: "12px 14px",
+                        padding: isChild ? "10px 14px 10px 28px" : "12px 14px",
                         borderRadius: 10,
-                        border: `1px solid ${selected ? "#2563eb" : "#e2e8f0"}`,
-                        background: selected ? "#eff6ff" : "#fff",
-                        cursor: "pointer",
+                        border: `1px solid ${selected ? (isChild ? "#fde68a" : "#2563eb") : "#e2e8f0"}`,
+                        background: selected ? (isChild ? "#fffdf7" : "#eff6ff") : "#fff",
+                        cursor: locked ? "default" : "pointer",
+                        opacity: locked && !selected ? 0.5 : 1,
                       }}
                     >
                       <input
                         type="checkbox"
                         checked={selected}
+                        disabled={locked}
                         onChange={() => {
+                          if (locked) return;
                           setPickerSelected((prev) => {
                             const next = new Set(prev);
-                            if (next.has(charge._id)) next.delete(charge._id);
-                            else next.add(charge._id);
+                            if (next.has(charge._id)) {
+                              next.delete(charge._id);
+                              // Also remove child late fees when deselecting parent
+                              for (const c of currentCharges) {
+                                if (c.parentCharge === charge._id) next.delete(c._id);
+                              }
+                            } else {
+                              next.add(charge._id);
+                              // Auto-select child late fees when selecting parent
+                              for (const c of currentCharges) {
+                                if (c.parentCharge === charge._id) next.add(c._id);
+                              }
+                            }
                             return next;
                           });
                         }}
-                        style={{ width: 16, height: 16, accentColor: "#2563eb" }}
+                        style={{ width: 16, height: 16, accentColor: isChild ? "#f59e0b" : "#2563eb" }}
                       />
                       <div style={{ flex: 1 }}>
-                        <p style={{ margin: 0, fontSize: 14, fontWeight: 600 }}>{charge.title}</p>
+                        <p style={{ margin: 0, fontSize: isChild ? 13 : 14, fontWeight: 600, color: isChild ? "#64748b" : undefined }}>
+                          {isChild && <span style={{ color: "#f59e0b", marginRight: 4 }}>↳</span>}
+                          {charge.title}
+                          {isChild && (
+                            <span
+                              style={{
+                                display: "inline-block",
+                                marginLeft: 6,
+                                fontSize: 10,
+                                fontWeight: 500,
+                                color: "#f59e0b",
+                                background: "#fffbeb",
+                                border: "1px solid #fde68a",
+                                borderRadius: 4,
+                                padding: "1px 5px",
+                                verticalAlign: "middle",
+                              }}
+                            >
+                              Late Fee
+                            </span>
+                          )}
+                        </p>
                         <p style={{ margin: "2px 0 0", fontSize: 12, color: "#94a3b8" }}>
                           {charge.category?.name ?? "-"} · Due {fmtDate(charge.dueDate)}
                         </p>
                       </div>
-                      <span style={{ fontSize: 14, fontWeight: 700 }}>{fmt(charge.balance)}</span>
+                      <span style={{ fontSize: isChild ? 13 : 14, fontWeight: 700 }}>{fmt(charge.balance)}</span>
                     </label>
                   );
                 })}
             </div>
             <div style={{ padding: "16px 24px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: "1px solid #f1f5f9" }}>
               <span style={{ fontSize: 13, color: "#64748b" }}>
-                {pickerSelected.size > 0
-                  ? `${pickerSelected.size} selected · ${fmt(currentCharges.filter((c) => pickerSelected.has(c._id)).reduce((s, c) => s + c.balance, 0))}`
-                  : "Select at least one charge"}
+                {(() => {
+                  // Include auto-selected late fees in the count
+                  const effectiveSelected = currentCharges.filter((c) =>
+                    pickerSelected.has(c._id) || (c.parentCharge && pickerSelected.has(c.parentCharge))
+                  );
+                  return effectiveSelected.length > 0
+                    ? `${effectiveSelected.length} selected · ${fmt(effectiveSelected.reduce((s, c) => s + c.balance, 0))}`
+                    : "Select at least one charge";
+                })()}
               </span>
               <div style={{ display: "flex", gap: 8 }}>
                 <button
@@ -1078,7 +1177,10 @@ export default function TenantPortalDashboard({
                 </button>
                 <button
                   onClick={() => {
-                    const selected = currentCharges.filter((c) => pickerSelected.has(c._id));
+                    // Include auto-selected late fees
+                    const selected = currentCharges.filter((c) =>
+                      pickerSelected.has(c._id) || (c.parentCharge && pickerSelected.has(c.parentCharge))
+                    );
                     if (selected.length > 0) {
                       setShowPickerModal(false);
                       setCheckoutCharges(selected);
