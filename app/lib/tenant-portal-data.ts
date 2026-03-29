@@ -55,9 +55,10 @@ export async function buildTenantPortalSession({
     overdue: 0,
     unpaid: 1,
     partial: 2,
-    paid: 3,
-    waived: 4,
-    voided: 5,
+    pending: 3,
+    paid: 4,
+    waived: 5,
+    voided: 6,
   };
 
   const charges = [...rawCharges].sort(

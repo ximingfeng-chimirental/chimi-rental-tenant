@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
       tenant: tenant._id,
       status: { $in: ["pending", "processing"] },
       "chargesApplied.chargeId": charge._id,
-    }).select("_id status stripe.paymentIntentId");
+    }).select("_id status stripe.paymentIntentId chargesApplied");
 
     if (existingInFlightPayment) {
       if (existingInFlightPayment.status === "processing") {
@@ -92,6 +92,16 @@ export async function POST(req: NextRequest) {
         if (piId) await stripe.paymentIntents.cancel(piId);
       } catch {
         // Stripe cancel failed — still clean up local record
+      }
+      // Reset any charges that were set to "pending" by this abandoned payment
+      const canceledChargeIds = (existingInFlightPayment.chargesApplied ?? []).map(
+        (ca: { chargeId: unknown }) => ca.chargeId
+      );
+      if (canceledChargeIds.length > 0) {
+        await ChargeModel.updateMany(
+          { _id: { $in: canceledChargeIds }, status: "pending" },
+          { $set: { status: "unpaid" } }
+        );
       }
       await ChargePaymentModel.deleteOne({ _id: existingInFlightPayment._id });
     }
@@ -188,6 +198,16 @@ export async function POST(req: NextRequest) {
     stripe: { paymentIntentId: paymentIntent.id },
     status: "pending",
   });
+
+  // For ACH payments, mark each charge as "pending" so tenants know
+  // the payment is in-flight (ACH takes 3–5 business days to settle).
+  // Card payments are not marked pending to avoid flicker on quick settlement.
+  if (method === "ach") {
+    await ChargeModel.updateMany(
+      { _id: { $in: charges.map((c) => c._id) } },
+      { $set: { status: "pending" } }
+    );
+  }
 
   const chargeName =
     charges.length === 1

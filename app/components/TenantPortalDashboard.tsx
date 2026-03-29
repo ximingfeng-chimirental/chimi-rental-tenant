@@ -16,7 +16,7 @@ interface PortalCharge {
   amount: number;
   balance: number;
   dueDate: string;
-  status: "unpaid" | "partial" | "paid" | "overdue" | "voided" | "waived";
+  status: "unpaid" | "partial" | "pending" | "paid" | "overdue" | "voided" | "waived";
   paidAt: string | null;
   createdAt: string;
   parentCharge: string | null;
@@ -83,6 +83,7 @@ const STATUS_STYLE: Record<
   overdue: { label: "Overdue", color: "#991b1b", bg: "#fef2f2", border: "#fca5a5" },
   unpaid: { label: "Unpaid", color: "#92400e", bg: "#fffbeb", border: "#fcd34d" },
   partial: { label: "Partial", color: "#1e40af", bg: "#eff6ff", border: "#93c5fd" },
+  pending: { label: "Payment Pending", color: "#1d4ed8", bg: "#eff6ff", border: "#93c5fd" },
   paid: { label: "Paid", color: "#166534", bg: "#f0fdf4", border: "#86efac" },
   waived: { label: "Waived", color: "#6b21a8", bg: "#faf5ff", border: "#d8b4fe" },
   voided: { label: "Voided", color: "#475569", bg: "#f8fafc", border: "#cbd5e1" },
@@ -121,7 +122,7 @@ function Header() {
 }
 
 function StatusBadge({ status }: { status: PortalCharge["status"] }) {
-  const item = STATUS_STYLE[status];
+  const item = STATUS_STYLE[status] ?? { label: status ?? "Unknown", color: "#475569", bg: "#f8fafc", border: "#cbd5e1" };
   return (
     <span
       style={{
@@ -1016,8 +1017,12 @@ export default function TenantPortalDashboard({
                           </span>
                         )
                       ) : (
-                        <span style={{ fontSize: 12, color: "#94a3b8" }}>
-                          {charge.paidAt ? `Paid ${fmtDate(charge.paidAt)}` : "-"}
+                        <span style={{ fontSize: 12, color: charge.status === "pending" ? "#1d4ed8" : "#94a3b8", fontWeight: charge.status === "pending" ? 500 : 400 }}>
+                          {charge.status === "pending"
+                            ? "ACH in progress"
+                            : charge.paidAt
+                            ? `Paid ${fmtDate(charge.paidAt)}`
+                            : "-"}
                         </span>
                       )}
                     </div>

@@ -40,7 +40,7 @@ const ChargeSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["unpaid", "partial", "paid", "overdue", "voided", "waived"],
+      enum: ["unpaid", "partial", "pending", "paid", "overdue", "voided", "waived"],
       default: "unpaid",
     },
     paidAt: {
