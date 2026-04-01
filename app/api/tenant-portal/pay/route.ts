@@ -114,10 +114,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Landlord not found" }, { status: 404 });
   }
 
-  const convenienceFeePaidBy: "tenant" | "landlord" =
-    owner.paymentSettings?.convenienceFeePaidBy ?? "tenant";
   const method: "card" | "ach" =
     paymentMethod === "ach" ? "ach" : "card";
+  const convenienceFeePaidBy: "tenant" | "landlord" =
+    method === "ach"
+      ? (owner.paymentSettings?.achFeePaidBy ?? "landlord")
+      : (owner.paymentSettings?.cardFeePaidBy ?? "tenant");
   const stripePaymentMethodType =
     method === "ach" ? "us_bank_account" : "card";
 

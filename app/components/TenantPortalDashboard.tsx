@@ -27,6 +27,11 @@ interface PortalCharge {
   } | null;
 }
 
+interface FeePolicy {
+  achFeePaidBy: "tenant" | "landlord";
+  cardFeePaidBy: "tenant" | "landlord";
+}
+
 interface PortalSession {
   tenant: { _id: string; firstName?: string; lastName?: string; email?: string };
   propertyUnit: {
@@ -39,6 +44,7 @@ interface PortalSession {
     } | null;
   } | null;
   charges: PortalCharge[];
+  feePolicy?: FeePolicy;
 }
 
 interface PaymentContext {
@@ -256,11 +262,13 @@ function PaymentForm({
 function PaymentModal({
   charges,
   tenant,
+  feePolicy,
   onSuccess,
   onClose,
 }: {
   charges: PortalCharge[];
   tenant: { firstName?: string; lastName?: string; email?: string };
+  feePolicy?: FeePolicy;
   onSuccess: (chargeIds: string[], status: "succeeded" | "processing") => void;
   onClose: () => void;
 }) {
@@ -438,8 +446,10 @@ function PaymentModal({
                       <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
                         {isAch ? "US bank account" : "Debit or credit card"}
                       </div>
-                      <div style={{ fontSize: 11, marginTop: 6, color: isAch ? "#16a34a" : "#94a3b8", fontWeight: isAch ? 600 : 400 }}>
-                        {isAch ? "Lower fees" : "Higher fees"}
+                      <div style={{ fontSize: 11, marginTop: 6, color: (isAch ? feePolicy?.achFeePaidBy : feePolicy?.cardFeePaidBy) === "landlord" ? "#16a34a" : "#94a3b8", fontWeight: (isAch ? feePolicy?.achFeePaidBy : feePolicy?.cardFeePaidBy) === "landlord" ? 600 : 400 }}>
+                        {(isAch ? feePolicy?.achFeePaidBy : feePolicy?.cardFeePaidBy) === "landlord"
+                          ? "No processing fee"
+                          : isAch ? "Lower fees" : "Higher fees"}
                       </div>
                     </button>
                   );
@@ -1212,6 +1222,7 @@ export default function TenantPortalDashboard({
         <PaymentModal
           charges={checkoutCharges}
           tenant={session?.tenant ?? {}}
+          feePolicy={session?.feePolicy}
           onSuccess={handlePaymentSuccess}
           onClose={() => {
             const closedIds = checkoutCharges.map((c) => c._id);

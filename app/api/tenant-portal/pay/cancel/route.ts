@@ -38,6 +38,7 @@ export async function POST(req: NextRequest) {
         "requires_action",
       ].includes(paymentIntent.status)
     ) {
+      // PI has already progressed past cancelable state — don't touch the ChargePayment
       return NextResponse.json({
         success: true,
         skipped: true,

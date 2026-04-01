@@ -1,4 +1,5 @@
 import Tenant from "@/app/models/tenant.model";
+import User from "@/app/models/user.model";
 import ChargeModel from "@/app/models/charge.model";
 import ChargePaymentModel from "@/app/models/charge-payment.model";
 import LeaseModel from "@/app/models/lease.model";
@@ -98,6 +99,13 @@ export async function buildTenantPortalSession({
     }
   }
 
+  // Fetch landlord fee policy
+  const owner = await User.findById(ownerId).select("paymentSettings").lean();
+  const feePolicy = {
+    achFeePaidBy: (owner as any)?.paymentSettings?.achFeePaidBy || "landlord",
+    cardFeePaidBy: (owner as any)?.paymentSettings?.cardFeePaidBy || "tenant",
+  };
+
   const unit = tenant.propertyUnit as {
     _id: string;
     name?: string;
@@ -135,6 +143,7 @@ export async function buildTenantPortalSession({
             : null,
         }
       : null,
+    feePolicy,
     charges: charges.map((charge) => ({
       _id: String(charge._id),
       title: charge.title,

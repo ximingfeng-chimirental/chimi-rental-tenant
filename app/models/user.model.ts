@@ -24,7 +24,12 @@ const UserSchema = new Schema(
       payoutsEnabled: { type: Boolean, default: false },
     },
     paymentSettings: {
-      convenienceFeePaidBy: {
+      achFeePaidBy: {
+        type: String,
+        enum: ["tenant", "landlord"],
+        default: "landlord",
+      },
+      cardFeePaidBy: {
         type: String,
         enum: ["tenant", "landlord"],
         default: "tenant",
