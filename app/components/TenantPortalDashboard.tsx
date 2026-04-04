@@ -21,7 +21,7 @@ interface PortalCharge {
   createdAt: string;
   parentCharge: string | null;
   pendingPayment: {
-    status: "pending" | "processing";
+    status: string;
     paymentMethod: string;
     createdAt: string | null;
   } | null;
@@ -47,13 +47,12 @@ interface PortalSession {
   feePolicy?: FeePolicy;
 }
 
-interface PaymentContext {
-  chargeId: string;
+interface PreviewContext {
+  chargeIds: string[];
   chargeName: string;
-  paymentIntentId: string;
-  clientSecret: string;
   stripePromise: Promise<Stripe | null>;
   amountCents: number;
+  subtotalCents: number;
   convenienceFeeCents: number;
   convenienceFeePaidBy: "tenant" | "landlord";
   paymentMethod: "card" | "ach";
@@ -154,7 +153,7 @@ function PaymentForm({
   onSuccess,
   onClose,
 }: {
-  ctx: PaymentContext;
+  ctx: PreviewContext;
   tenant: { firstName?: string; lastName?: string; email?: string };
   onSuccess: (chargeId: string, status: "succeeded" | "processing") => void;
   onClose: () => void;
@@ -170,10 +169,44 @@ function PaymentForm({
     setConfirming(true);
     setError(null);
 
-    const returnUrl = `${window.location.origin}/?payment_status=succeeded&charge_id=${ctx.chargeId}`;
+    // Step 1: Validate the payment form via Elements
+    const { error: submitError } = await elements.submit();
+    if (submitError) {
+      setError(submitError.message ?? "Please check your payment details.");
+      setConfirming(false);
+      return;
+    }
+
+    // Step 2: Create the PaymentIntent + ChargePayment server-side
+    let clientSecret: string;
+    try {
+      const res = await fetch("/api/tenant-portal/pay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          chargeIds: ctx.chargeIds,
+          paymentMethod: ctx.paymentMethod,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error ?? "Failed to initiate payment");
+      }
+      clientSecret = data.clientSecret;
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Failed to initiate payment"
+      );
+      setConfirming(false);
+      return;
+    }
+
+    // Step 3: Confirm the payment with Stripe using the new clientSecret
+    const returnUrl = `${window.location.origin}/?payment_status=succeeded&charge_id=${ctx.chargeIds[0]}`;
 
     const result = await stripe.confirmPayment({
       elements,
+      clientSecret,
       confirmParams: { return_url: returnUrl },
       redirect: "if_required",
     });
@@ -185,12 +218,12 @@ function PaymentForm({
     }
 
     if (result.paymentIntent?.status === "succeeded") {
-      onSuccess(ctx.chargeId, "succeeded" as const);
+      onSuccess(ctx.chargeIds[0], "succeeded" as const);
       return;
     }
 
     if (result.paymentIntent?.status === "processing") {
-      onSuccess(ctx.chargeId, "processing" as const);
+      onSuccess(ctx.chargeIds[0], "processing" as const);
       return;
     }
 
@@ -273,43 +306,22 @@ function PaymentModal({
   onClose: () => void;
 }) {
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("ach");
-  const [ctx, setCtx] = useState<PaymentContext | null>(null);
+  const [ctx, setCtx] = useState<PreviewContext | null>(null);
   const [loading, setLoading] = useState(false);
-  const [closing, setClosing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const totalBalance = charges.reduce((sum, c) => sum + c.balance, 0);
   const chargeIds = charges.map((c) => c._id);
 
-  async function cleanupPendingCheckout(pendingCtx: PaymentContext) {
-    try {
-      await fetch("/api/tenant-portal/pay/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentIntentId: pendingCtx.paymentIntentId }),
-      });
-    } catch {
-      // best-effort
-    }
-  }
-
-  async function handleCloseModal() {
-    if (closing) return;
-    setClosing(true);
-    if (ctx) await cleanupPendingCheckout(ctx);
+  function handleCloseModal() {
     setCtx(null);
     setLoadError(null);
-    setClosing(false);
     onClose();
   }
 
-  async function handleChangeMethod() {
-    if (closing) return;
-    setClosing(true);
-    if (ctx) await cleanupPendingCheckout(ctx);
+  function handleChangeMethod() {
     setCtx(null);
     setLoadError(null);
-    setClosing(false);
   }
 
   async function startCheckout() {
@@ -317,7 +329,7 @@ function PaymentModal({
     setLoadError(null);
 
     try {
-      const res = await fetch("/api/tenant-portal/pay", {
+      const res = await fetch("/api/tenant-portal/pay/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -327,22 +339,21 @@ function PaymentModal({
       });
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error ?? "Failed to initiate payment");
+        throw new Error(data.error ?? "Failed to load payment details");
       }
       setCtx({
-        chargeId: chargeIds[0],
+        chargeIds,
         chargeName: data.chargeName,
-        paymentIntentId: data.paymentIntentId,
-        clientSecret: data.clientSecret,
         stripePromise: loadStripe(data.publishableKey),
         amountCents: data.amountCents,
+        subtotalCents: data.subtotalCents,
         convenienceFeeCents: data.convenienceFeeCents,
         convenienceFeePaidBy: data.convenienceFeePaidBy,
         paymentMethod: selectedMethod,
       });
     } catch (error) {
       setLoadError(
-        error instanceof Error ? error.message : "Failed to initiate payment"
+        error instanceof Error ? error.message : "Failed to load payment details"
       );
     } finally {
       setLoading(false);
@@ -350,7 +361,7 @@ function PaymentModal({
   }
 
   const subtotalCents = ctx
-    ? ctx.amountCents - ctx.convenienceFeeCents
+    ? ctx.subtotalCents
     : Math.round(totalBalance * 100);
 
   return (
@@ -366,7 +377,7 @@ function PaymentModal({
         padding: 16,
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) void handleCloseModal();
+        if (e.target === e.currentTarget) handleCloseModal();
       }}
     >
       <div
@@ -472,29 +483,29 @@ function PaymentModal({
               ) : null}
               <div style={{ display: "flex", gap: 8, marginTop: 20, justifyContent: "flex-end" }}>
                 <button
-                  onClick={() => void handleCloseModal()}
-                  disabled={loading || closing}
+                  onClick={() => handleCloseModal()}
+                  disabled={loading}
                   style={{
                     padding: "10px 18px",
                     borderRadius: 8,
                     border: "1px solid #e2e8f0",
                     background: "#fff",
                     color: "#475569",
-                    cursor: loading || closing ? "not-allowed" : "pointer",
+                    cursor: loading ? "not-allowed" : "pointer",
                   }}
                 >
                   Cancel
                 </button>
                 <button
                   onClick={startCheckout}
-                  disabled={loading || closing}
+                  disabled={loading}
                   style={{
                     padding: "10px 20px",
                     borderRadius: 8,
                     border: "none",
-                    background: loading || closing ? "#94a3b8" : "#2563eb",
+                    background: loading ? "#94a3b8" : "#2563eb",
                     color: "#fff",
-                    cursor: loading || closing ? "not-allowed" : "pointer",
+                    cursor: loading ? "not-allowed" : "pointer",
                   }}
                 >
                   {loading ? "Loading..." : `Continue with ${selectedMethod === "ach" ? "ACH" : "card"}`}
@@ -524,13 +535,12 @@ function PaymentModal({
                   Paying by {ctx.paymentMethod === "ach" ? "ACH" : "card"}
                 </div>
                 <button
-                  onClick={() => void handleChangeMethod()}
-                  disabled={closing}
+                  onClick={() => handleChangeMethod()}
                   style={{
                     background: "none",
                     border: "none",
                     color: "#2563eb",
-                    cursor: closing ? "not-allowed" : "pointer",
+                    cursor: "pointer",
                     fontSize: 12,
                     fontWeight: 600,
                     padding: 0,
@@ -542,7 +552,10 @@ function PaymentModal({
               <Elements
                 stripe={ctx.stripePromise}
                 options={{
-                  clientSecret: ctx.clientSecret,
+                  mode: "payment",
+                  amount: ctx.amountCents,
+                  currency: "usd",
+                  paymentMethodTypes: [ctx.paymentMethod === "ach" ? "us_bank_account" : "card"],
                   appearance: {
                     theme: "stripe",
                     variables: { colorPrimary: "#2563eb", borderRadius: "8px" },
@@ -553,7 +566,7 @@ function PaymentModal({
                   ctx={ctx}
                   tenant={tenant}
                   onSuccess={(_chargeId, status) => onSuccess(chargeIds, status)}
-                  onClose={() => void handleCloseModal()}
+                  onClose={() => handleCloseModal()}
                 />
               </Elements>
             </>

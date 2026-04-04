@@ -71,7 +71,7 @@ export async function buildTenantPortalSession({
   const pendingPayments = await ChargePaymentModel.find({
     owner: ownerId,
     tenant: tenantId,
-    status: { $in: ["pending", "processing"] },
+    status: { $in: ["payment_submitted", "ach_debit_in_transit"] },
     "chargesApplied.chargeId": { $in: charges.map((charge) => charge._id) },
   })
     .select("chargesApplied status paymentMethod createdAt")
@@ -80,7 +80,7 @@ export async function buildTenantPortalSession({
   const pendingPaymentByChargeId = new Map<
     string,
     {
-      status: "pending" | "processing";
+      status: string;
       paymentMethod: string;
       createdAt: Date | null;
     }
@@ -91,7 +91,7 @@ export async function buildTenantPortalSession({
       const chargeId = String((applied as { chargeId: string }).chargeId);
       if (!pendingPaymentByChargeId.has(chargeId)) {
         pendingPaymentByChargeId.set(chargeId, {
-          status: payment.status as "pending" | "processing",
+          status: payment.status as string,
           paymentMethod: payment.paymentMethod,
           createdAt: payment.createdAt ?? null,
         });

@@ -28,19 +28,51 @@ export const stripeFeeSchedule = {
   achCapCents: getEnvNumber("STRIPE_ACH_FEE_CAP_CENTS", 500),
 };
 
+/**
+ * Calculate the convenience fee to charge so that the fee collected exactly
+ * covers Stripe's processing cost — no platform subsidy.
+ *
+ * feePaidBy="landlord": Stripe charges on subtotal (tenant pays face value).
+ *   fee = subtotal × rate  (same base as Stripe, direct pass-through)
+ *
+ * feePaidBy="tenant": Stripe charges on (subtotal + fee), so we must gross up.
+ *   fee = subtotal × rate / (1 - rate)
+ *   Proof: Stripe takes (subtotal + fee) × rate = fee  ✓
+ *
+ * Card has an additional fixed component ($0.30), so:
+ *   fee = (subtotal × rate + fixed) / (1 - rate)
+ */
 export function calculateConvenienceFee(
   subtotal: number,
-  method: "card" | "ach"
+  method: "card" | "ach",
+  feePaidBy: "tenant" | "landlord" = "tenant"
 ): number {
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+
   if (method === "card") {
-    const percentFee = subtotal * (stripeFeeSchedule.cardPercent / 100);
-    const fixedFee = stripeFeeSchedule.cardFixedCents / 100;
-    return Math.round((percentFee + fixedFee) * 100) / 100;
+    const rate = stripeFeeSchedule.cardPercent / 100;
+    const fixed = stripeFeeSchedule.cardFixedCents / 100;
+    if (feePaidBy === "landlord") {
+      // Stripe charges on subtotal — direct pass-through
+      return round2(subtotal * rate + fixed);
+    }
+    // Gross up so fee covers Stripe's charge on the total
+    return round2((subtotal * rate + fixed) / (1 - rate));
   }
 
-  const percentFee = subtotal * (stripeFeeSchedule.achPercent / 100);
-  const cappedFee = Math.min(percentFee, stripeFeeSchedule.achCapCents / 100);
-  return Math.round(cappedFee * 100) / 100;
+  // ACH
+  const rate = stripeFeeSchedule.achPercent / 100;
+  const cap = stripeFeeSchedule.achCapCents / 100; // $5.00
+
+  if (feePaidBy === "landlord") {
+    // Stripe charges on subtotal — direct pass-through, cap applies normally
+    return round2(Math.min(subtotal * rate, cap));
+  }
+
+  // Gross up: fee = subtotal × rate / (1 - rate), capped at $5
+  // At cap, Stripe charges exactly $5 regardless of total, so fee = $5
+  const grossedUp = (subtotal * rate) / (1 - rate);
+  return round2(Math.min(grossedUp, cap));
 }
 
 export default stripe;

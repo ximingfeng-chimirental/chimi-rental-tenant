@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedTenant } from "@/app/lib/tenant-auth";
+import ChargeModel from "@/app/models/charge.model";
 import ChargePaymentModel from "@/app/models/charge-payment.model";
 import stripe from "@/app/lib/stripe";
 
@@ -52,7 +53,21 @@ export async function POST(req: NextRequest) {
     // Still clean up our local record so the tenant isn't stuck
   }
 
-  await ChargePaymentModel.deleteOne({ _id: chargePayment._id });
+  // Revert any charges that were set to "pending" by this ACH payment
+  const canceledChargeIds = (chargePayment.chargesApplied ?? []).map(
+    (ca: { chargeId: unknown }) => ca.chargeId
+  );
+  if (canceledChargeIds.length > 0) {
+    await ChargeModel.updateMany(
+      { _id: { $in: canceledChargeIds }, status: "pending" },
+      { $set: { status: "unpaid" } }
+    );
+  }
+
+  await ChargePaymentModel.updateOne(
+    { _id: chargePayment._id },
+    { $set: { status: "canceled" } }
+  );
 
   return NextResponse.json({ success: true });
 }

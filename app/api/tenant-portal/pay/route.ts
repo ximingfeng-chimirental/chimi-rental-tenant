@@ -71,39 +71,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Cancel any existing in-flight payments for these charges
+  // Block if any charge already has a payment in processing state (e.g. ACH in-flight)
   for (const charge of charges) {
-    const existingInFlightPayment = await ChargePaymentModel.findOne({
+    const processingPayment = await ChargePaymentModel.findOne({
       owner: tenant.owner,
       tenant: tenant._id,
-      status: { $in: ["pending", "processing"] },
+      status: { $in: ["processing", "ach_debit_in_transit"] },
       "chargesApplied.chargeId": charge._id,
-    }).select("_id status stripe.paymentIntentId chargesApplied");
+    }).select("_id");
 
-    if (existingInFlightPayment) {
-      if (existingInFlightPayment.status === "processing") {
-        return NextResponse.json(
-          { error: `A payment for "${charge.title}" is already processing.` },
-          { status: 409 }
-        );
-      }
-      try {
-        const piId = existingInFlightPayment.stripe?.paymentIntentId;
-        if (piId) await stripe.paymentIntents.cancel(piId);
-      } catch {
-        // Stripe cancel failed — still clean up local record
-      }
-      // Reset any charges that were set to "pending" by this abandoned payment
-      const canceledChargeIds = (existingInFlightPayment.chargesApplied ?? []).map(
-        (ca: { chargeId: unknown }) => ca.chargeId
+    if (processingPayment) {
+      return NextResponse.json(
+        { error: `A payment for "${charge.title}" is already processing.` },
+        { status: 409 }
       );
-      if (canceledChargeIds.length > 0) {
-        await ChargeModel.updateMany(
-          { _id: { $in: canceledChargeIds }, status: "pending" },
-          { $set: { status: "unpaid" } }
-        );
-      }
-      await ChargePaymentModel.deleteOne({ _id: existingInFlightPayment._id });
     }
   }
 
@@ -125,7 +106,7 @@ export async function POST(req: NextRequest) {
 
   // Calculate totals across all charges
   const subtotal = charges.reduce((sum, c) => sum + c.balance, 0);
-  const convenienceFee = calculateConvenienceFee(subtotal, method);
+  const convenienceFee = calculateConvenienceFee(subtotal, method, convenienceFeePaidBy);
   const tenantPays =
     convenienceFeePaidBy === "tenant"
       ? subtotal + convenienceFee
@@ -159,9 +140,18 @@ export async function POST(req: NextRequest) {
 
   if (stripeAccountId && chargesEnabled) {
     paymentIntentParams.on_behalf_of = stripeAccountId;
-    paymentIntentParams.transfer_data = { destination: stripeAccountId };
     if (convenienceFeePaidBy === "tenant") {
+      // Tenant pays full amount; platform collects fee via application_fee_amount
+      paymentIntentParams.transfer_data = { destination: stripeAccountId };
       paymentIntentParams.application_fee_amount = convenienceFeeCents;
+    } else {
+      // Landlord pays fee; transfer only netToLandlord so connected account
+      // receives exactly what was recorded — platform absorbs the fee
+      const netToLandlordCents = Math.round((subtotal - convenienceFee) * 100);
+      paymentIntentParams.transfer_data = {
+        destination: stripeAccountId,
+        amount: netToLandlordCents,
+      };
     }
   }
 
@@ -195,10 +185,11 @@ export async function POST(req: NextRequest) {
     convenienceFee,
     feePaidBy: convenienceFeePaidBy,
     totalCharged: tenantPays,
-    netToLandlord: subtotal,
+    netToLandlord: convenienceFeePaidBy === "tenant" ? subtotal : subtotal - convenienceFee,
     paymentMethod: method,
     stripe: { paymentIntentId: paymentIntent.id },
-    status: "pending",
+    status: "payment_submitted",
+    initiatedAt: new Date(paymentIntent.created * 1000),
   });
 
   // For ACH payments, mark each charge as "pending" so tenants know

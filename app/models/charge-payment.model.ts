@@ -63,10 +63,25 @@ const ChargePaymentSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ["pending", "processing", "succeeded", "failed", "refunded"],
-      default: "pending",
+      enum: [
+        // New unified statuses
+        "payment_submitted",
+        "ach_debit_in_transit",
+        "captured_by_platform",
+        "held_on_connected_account",
+        "available_on_connected_account",
+        "payout_in_transit",
+        "deposited_to_bank",
+        "failed",
+        "canceled",
+        "refunded",
+        "disputed",
+        "payout_failed",
+      ],
+      default: "payment_submitted",
     },
     paidAt: { type: Date, default: null },
+    initiatedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
