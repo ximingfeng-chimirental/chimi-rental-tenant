@@ -24,6 +24,7 @@ interface PortalCharge {
     status: string;
     paymentMethod: string;
     createdAt: string | null;
+    microDepositVerificationUrl: string | null;
   } | null;
 }
 
@@ -152,11 +153,13 @@ function PaymentForm({
   ctx,
   tenant,
   onSuccess,
+  onMicrodepositPending,
   onClose,
 }: {
   ctx: PreviewContext;
   tenant: { firstName?: string; lastName?: string; email?: string };
   onSuccess: (chargeId: string, status: "succeeded" | "processing") => void;
+  onMicrodepositPending: (verificationUrl: string) => void;
   onClose: () => void;
 }) {
   const stripe = useStripe();
@@ -228,6 +231,39 @@ function PaymentForm({
       return;
     }
 
+    if (result.paymentIntent?.status === "requires_action") {
+      const nextAction = result.paymentIntent.next_action as any;
+      if (nextAction?.type === "verify_with_microdeposits") {
+        const verificationUrl = nextAction.verify_with_microdeposits?.hosted_verification_url;
+        if (verificationUrl) {
+          // Save verification URL to DB and notify parent
+          try {
+            await fetch("/api/tenant-portal/pay/microdeposit-pending", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                paymentIntentId: result.paymentIntent.id,
+                verificationUrl,
+              }),
+            });
+          } catch (e) {
+            console.error("[pay] Failed to save microdeposit pending:", e);
+          }
+          onMicrodepositPending(verificationUrl);
+          return;
+        }
+      }
+      console.error("[pay] confirmPayment returned requires_action:", result.paymentIntent.id, nextAction);
+      setError(
+        "Your bank requires additional verification. Please try again or use a different payment method."
+      );
+      setConfirming(false);
+      return;
+    }
+
+    // Catch-all for any other unexpected status
+    console.error("[pay] Unexpected paymentIntent status after confirm:", result.paymentIntent?.status, result.paymentIntent?.id);
+    setError("Something went wrong. Please try again.");
     setConfirming(false);
   }
 
@@ -298,12 +334,14 @@ function PaymentModal({
   tenant,
   feePolicy,
   onSuccess,
+  onMicrodepositPending,
   onClose,
 }: {
   charges: PortalCharge[];
   tenant: { firstName?: string; lastName?: string; email?: string };
   feePolicy?: FeePolicy;
   onSuccess: (chargeIds: string[], status: "succeeded" | "processing") => void;
+  onMicrodepositPending: (chargeIds: string[], verificationUrl: string) => void;
   onClose: () => void;
 }) {
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod>("ach");
@@ -569,6 +607,7 @@ function PaymentModal({
                   ctx={ctx}
                   tenant={tenant}
                   onSuccess={(_chargeId, status) => onSuccess(chargeIds, status)}
+                  onMicrodepositPending={(url) => onMicrodepositPending(chargeIds, url)}
                   onClose={() => handleCloseModal()}
                 />
               </Elements>
@@ -597,6 +636,8 @@ export default function TenantPortalDashboard({
   const [processingChargeIds, setProcessingChargeIds] = useState<string[]>([]);
   // Brief cooldown after modal closes to prevent accidental double-clicks
   const [cooldownChargeIds, setCooldownChargeIds] = useState<string[]>([]);
+  const [microdepositChargeIds, setMicrodepositChargeIds] = useState<string[]>([]);
+  const [microdepositUrl, setMicrodepositUrl] = useState<string | null>(null);
   const [showPickerModal, setShowPickerModal] = useState(false);
   const [pickerSelected, setPickerSelected] = useState<Set<string>>(new Set());
 
@@ -675,6 +716,16 @@ export default function TenantPortalDashboard({
     window.setTimeout(() => {
       void loadSession();
     }, 3000);
+  }
+
+  function handleMicrodepositPending(chargeIds: string[], verificationUrl: string) {
+    setCheckoutCharges(null);
+    setMicrodepositChargeIds(chargeIds);
+    setMicrodepositUrl(verificationUrl);
+    // Reload to show updated pending status
+    window.setTimeout(() => {
+      void loadSession();
+    }, 2000);
   }
 
   if (loading) {
@@ -800,6 +851,44 @@ export default function TenantPortalDashboard({
           </h1>
           <p style={{ fontSize: 14, color: "#64748b", margin: 0 }}>{propertyLabel}</p>
         </div>
+
+        {microdepositChargeIds.length > 0 && microdepositUrl && (
+          <div
+            style={{
+              marginBottom: 20,
+              padding: "14px 18px",
+              borderRadius: 10,
+              background: "#fffbeb",
+              border: "1px solid #fde68a",
+            }}
+          >
+            <p style={{ margin: 0, fontSize: 14, fontWeight: 600, color: "#92400e" }}>
+              Bank verification required
+            </p>
+            <p style={{ margin: "8px 0 0", fontSize: 13, color: "#78350f", lineHeight: 1.5 }}>
+              Your bank requires additional verification. We&apos;ve sent two small deposits to your account.
+              They&apos;ll arrive in 1–2 business days. Once they arrive, click the button below to verify and complete your payment.
+            </p>
+            <a
+              href={microdepositUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-block",
+                marginTop: 10,
+                padding: "8px 16px",
+                borderRadius: 8,
+                background: "#f59e0b",
+                color: "#fff",
+                fontWeight: 600,
+                fontSize: 13,
+                textDecoration: "none",
+              }}
+            >
+              Verify bank account
+            </a>
+          </div>
+        )}
 
         {(successChargeIds.length > 0 || processingChargeIds.length > 0) && (
           <div
@@ -1021,25 +1110,51 @@ export default function TenantPortalDashboard({
                     <div style={{ minWidth: 130 }}>
                       {payable ? (
                         currentCharges.length === 1 ? (
-                        <button
-                          onClick={() => setCheckoutCharges([charge])}
-                          disabled={!!checkoutCharges || inFlight || justPaid || coolingDown}
-                          style={{
-                            padding: "8px 14px",
-                            borderRadius: 8,
-                            border: "none",
-                            background: !!checkoutCharges || inFlight || justPaid || coolingDown ? "#94a3b8" : "#2563eb",
-                            color: "#fff",
-                            width: "100%",
-                            fontWeight: 600,
-                            cursor: !!checkoutCharges || inFlight || justPaid || coolingDown ? "not-allowed" : "pointer",
-                          }}
-                        >
-                          {inFlight || justPaid ? "Payment pending" : `Pay ${fmt(charge.balance)}`}
-                        </button>
+                          inFlight && charge.pendingPayment?.status === "microdeposit_pending" && charge.pendingPayment.microDepositVerificationUrl ? (
+                            <a
+                              href={charge.pendingPayment.microDepositVerificationUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: "block",
+                                padding: "8px 14px",
+                                borderRadius: 8,
+                                border: "none",
+                                background: "#f59e0b",
+                                color: "#fff",
+                                width: "100%",
+                                fontWeight: 600,
+                                textAlign: "center",
+                                textDecoration: "none",
+                                fontSize: 14,
+                                boxSizing: "border-box",
+                              }}
+                            >
+                              Verify bank account
+                            </a>
+                          ) : (
+                            <button
+                              onClick={() => setCheckoutCharges([charge])}
+                              disabled={!!checkoutCharges || inFlight || justPaid || coolingDown}
+                              style={{
+                                padding: "8px 14px",
+                                borderRadius: 8,
+                                border: "none",
+                                background: !!checkoutCharges || inFlight || justPaid || coolingDown ? "#94a3b8" : "#2563eb",
+                                color: "#fff",
+                                width: "100%",
+                                fontWeight: 600,
+                                cursor: !!checkoutCharges || inFlight || justPaid || coolingDown ? "not-allowed" : "pointer",
+                              }}
+                            >
+                              {inFlight || justPaid ? "Payment pending" : `Pay ${fmt(charge.balance)}`}
+                            </button>
+                          )
                         ) : (
                           <span style={{ fontSize: 12, color: inFlight || justPaid ? "#2563eb" : "#94a3b8", fontWeight: inFlight || justPaid ? 600 : 400 }}>
-                            {inFlight || justPaid ? "Payment pending" : ""}
+                            {inFlight && charge.pendingPayment?.status === "microdeposit_pending"
+                              ? <a href={charge.pendingPayment.microDepositVerificationUrl ?? "#"} target="_blank" rel="noopener noreferrer" style={{ color: "#f59e0b", fontWeight: 600, textDecoration: "underline" }}>Verify bank</a>
+                              : inFlight || justPaid ? "Payment pending" : ""}
                           </span>
                         )
                       ) : (
@@ -1240,6 +1355,7 @@ export default function TenantPortalDashboard({
           tenant={session?.tenant ?? {}}
           feePolicy={session?.feePolicy}
           onSuccess={handlePaymentSuccess}
+          onMicrodepositPending={handleMicrodepositPending}
           onClose={() => {
             const closedIds = checkoutCharges.map((c) => c._id);
             setCheckoutCharges(null);

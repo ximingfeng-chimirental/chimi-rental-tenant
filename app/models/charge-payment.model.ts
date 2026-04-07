@@ -21,6 +21,7 @@ const StripeInfoSchema = new Schema(
     chargeId: { type: String, default: null },
     transferId: { type: String, default: null },
     receiptUrl: { type: String, default: null },
+    microDepositVerificationUrl: { type: String, default: null },
   },
   { _id: false }
 );
@@ -66,6 +67,7 @@ const ChargePaymentSchema = new Schema(
       enum: [
         // New unified statuses
         "payment_submitted",
+        "microdeposit_pending",
         "ach_debit_in_transit",
         "captured_by_platform",
         "held_on_connected_account",
@@ -77,6 +79,7 @@ const ChargePaymentSchema = new Schema(
         "refunded",
         "disputed",
         "payout_failed",
+        "payment_incomplete",
       ],
       default: "payment_submitted",
     },

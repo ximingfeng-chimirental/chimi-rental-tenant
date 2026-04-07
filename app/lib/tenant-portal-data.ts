@@ -71,10 +71,10 @@ export async function buildTenantPortalSession({
   const pendingPayments = await ChargePaymentModel.find({
     owner: ownerId,
     tenant: tenantId,
-    status: { $in: ["payment_submitted", "ach_debit_in_transit"] },
+    status: { $in: ["payment_submitted", "ach_debit_in_transit", "microdeposit_pending"] },
     "chargesApplied.chargeId": { $in: charges.map((charge) => charge._id) },
   })
-    .select("chargesApplied status paymentMethod createdAt")
+    .select("chargesApplied status paymentMethod createdAt stripe.microDepositVerificationUrl")
     .lean();
 
   const pendingPaymentByChargeId = new Map<
@@ -83,6 +83,7 @@ export async function buildTenantPortalSession({
       status: string;
       paymentMethod: string;
       createdAt: Date | null;
+      microDepositVerificationUrl: string | null;
     }
   >();
 
@@ -94,6 +95,7 @@ export async function buildTenantPortalSession({
           status: payment.status as string,
           paymentMethod: payment.paymentMethod,
           createdAt: payment.createdAt ?? null,
+          microDepositVerificationUrl: (payment as any).stripe?.microDepositVerificationUrl ?? null,
         });
       }
     }
