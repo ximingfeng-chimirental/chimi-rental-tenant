@@ -51,6 +51,7 @@ interface PreviewContext {
   chargeIds: string[];
   chargeName: string;
   stripePromise: Promise<Stripe | null>;
+  stripeAccountId: string | null;
   amountCents: number;
   subtotalCents: number;
   convenienceFeeCents: number;
@@ -344,10 +345,8 @@ function PaymentModal({
       setCtx({
         chargeIds,
         chargeName: data.chargeName,
-        stripePromise: loadStripe(
-          data.publishableKey,
-          data.stripeAccountId ? { stripeAccount: data.stripeAccountId } : undefined,
-        ),
+        stripePromise: loadStripe(data.publishableKey),
+        stripeAccountId: data.stripeAccountId || null,
         amountCents: data.amountCents,
         subtotalCents: data.subtotalCents,
         convenienceFeeCents: data.convenienceFeeCents,
@@ -559,6 +558,7 @@ function PaymentModal({
                   amount: ctx.amountCents,
                   currency: "usd",
                   paymentMethodTypes: [ctx.paymentMethod === "ach" ? "us_bank_account" : "card"],
+                  ...(ctx.stripeAccountId ? { on_behalf_of: ctx.stripeAccountId } : {}),
                   appearance: {
                     theme: "stripe",
                     variables: { colorPrimary: "#2563eb", borderRadius: "8px" },
