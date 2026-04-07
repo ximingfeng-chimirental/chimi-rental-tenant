@@ -102,8 +102,14 @@ export async function POST(req: NextRequest) {
       ? charges[0].title
       : `${charges.length} charges`;
 
+  // Pass connected account ID so the frontend can initialize Stripe Elements
+  // with stripeAccount — required when the PI uses on_behalf_of.
+  const stripeAccountId = owner.stripeConnect?.accountId ?? null;
+  const chargesEnabled = owner.stripeConnect?.chargesEnabled ?? false;
+
   return NextResponse.json({
     publishableKey: process.env.STRIPE_PUBLISHABLE_KEY ?? "",
+    stripeAccountId: stripeAccountId && chargesEnabled ? stripeAccountId : null,
     amountCents,
     subtotalCents,
     convenienceFeeCents,

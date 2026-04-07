@@ -344,7 +344,10 @@ function PaymentModal({
       setCtx({
         chargeIds,
         chargeName: data.chargeName,
-        stripePromise: loadStripe(data.publishableKey),
+        stripePromise: loadStripe(
+          data.publishableKey,
+          data.stripeAccountId ? { stripeAccount: data.stripeAccountId } : undefined,
+        ),
         amountCents: data.amountCents,
         subtotalCents: data.subtotalCents,
         convenienceFeeCents: data.convenienceFeeCents,
